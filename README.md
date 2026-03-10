@@ -9,7 +9,8 @@ The current implementation focuses on a production-style deployment path:
 - Google Cloud Build image build
 - Artifact Registry image storage
 - Google Cloud Run deployment
-- Mock medicine data and placeholder AI response
+- Firestore-backed medicine storage
+- Placeholder AI response for future Gemini integration
 
 ## Project Goal
 
@@ -19,15 +20,17 @@ Build a backend that:
 - runs in Docker on port `8080`
 - deploys to Google Cloud Run
 - stays modular and easy to extend
-- starts with mock data before Firestore and Gemini integration
+- uses Firestore for persistent medicine data
+- is ready for later Gemini integration
 
 ## Current Features
 
 - `GET /health` returns service status
-- `GET /medicines` returns mock medicine data
-- `POST /medicine` creates an in-memory medicine entry
+- `GET /medicines` reads medicine documents from Firestore
+- `POST /medicine` creates a document in Firestore collection `medicines`
 - `POST /ask-ai` returns a placeholder AI response
 - Cloud Run deployment with a public HTTPS endpoint
+- Firestore-backed persistence across container restarts
 
 ## Run Instructions
 
@@ -105,13 +108,10 @@ Mobile App / Postman / Browser
     Docker Container (FastAPI)
             |
             v
-      Artifact Registry
-            ^
-            |
-         Cloud Build
-            ^
-            |
-       Source Code Repo
+        Firestore Database
+
+Build and Deploy Path
+Source Code Repo -> Cloud Build -> Artifact Registry -> Cloud Run
 ```
 
 ### Deployment Pipeline
@@ -129,7 +129,9 @@ Mobile App / Postman / Browser
 2. Cloud Run routes the request to the active container revision.
 3. Uvicorn serves the FastAPI app inside the container.
 4. FastAPI executes the matching route handler.
-5. JSON response is returned to the client.
+5. The route calls the Firestore service layer when medicine data is needed.
+6. Firestore reads or writes documents in the `medicines` collection.
+7. JSON response is returned to the client.
 
 ## Components
 
@@ -138,6 +140,7 @@ Mobile App / Postman / Browser
 - `Cloud Build`: builds the Docker image remotely in Google Cloud
 - `Artifact Registry`: stores built container images
 - `Cloud Run`: runs the container as a serverless HTTP service
+- `Firestore`: stores persistent medicine documents as a managed NoSQL database
 
 ## API Endpoints
 
@@ -155,8 +158,8 @@ Response:
 
 ```json
 [
-  {"id": 1, "name": "Paracetamol", "dosage": "500mg", "time": "08:00"},
-  {"id": 2, "name": "Vitamin D", "dosage": "1000 IU", "time": "21:00"}
+  {"id":"abc123","name":"Paracetamol","dosage":"500mg","time":"08:00"},
+  {"id":"xyz789","name":"Vitamin D","dosage":"1000 IU","time":"21:00"}
 ]
 ```
 
@@ -171,7 +174,7 @@ Request:
 Response:
 
 ```json
-{"id":3,"name":"Aspirin","dosage":"75mg","time":"09:30"}
+{"id":"generated-doc-id","name":"Aspirin","dosage":"75mg","time":"09:30"}
 ```
 
 ### `POST /ask-ai`
@@ -222,6 +225,7 @@ Current deployed stack:
 - Region: `asia-south1`
 - Cloud Run service: `medicine-backend`
 - Artifact Registry repository: `medicine-backend-repo`
+- Firestore database: enabled and used by the backend
 
 Current public API:
 
@@ -233,9 +237,9 @@ Typical deploy commands:
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
 gcloud artifacts repositories create medicine-backend-repo --repository-format=docker --location=asia-south1
 gcloud auth configure-docker asia-south1-docker.pkg.dev
-gcloud builds submit --tag asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v1
+gcloud builds submit --tag asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v3
 gcloud run deploy medicine-backend \
-  --image asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v1 \
+  --image asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v3 \
   --region asia-south1 \
   --platform managed \
   --allow-unauthenticated \
@@ -246,18 +250,47 @@ gcloud run deploy medicine-backend \
   --max-instances 1
 ```
 
+### Firestore Setup Concept
+
+- Collection: `medicines`
+- Document: one medicine record
+- Fields:
+  - `name`
+  - `dosage`
+  - `time`
+
+Example document:
+
+```text
+medicines/
+  abc123
+    name: "Paracetamol"
+    dosage: "500mg"
+    time: "08:00"
+```
+
+### Cloud Run Authentication to Firestore
+
+The backend does not embed a credentials file inside the container.
+
+- Cloud Run runs the container as a Google service account.
+- `firestore.Client()` uses Application Default Credentials automatically.
+- Google client libraries obtain short-lived credentials for that service account.
+- Firestore authorizes read and write access using IAM roles on that service account.
+
+In practice, this means the code can call Firestore directly in Cloud Run without manually loading a JSON key file.
+
 ## Current Limits
 
-- medicine data is in-memory only
-- no Firestore integration yet
 - no real Gemini integration yet
 - no authentication yet
 - no automated test suite yet
+- local Firestore development setup is not documented yet
+- Firestore failures currently return `503`, but there is no retry strategy yet
 
 ## Next Recommended Steps
 
-1. Add Firestore persistence for medicines.
-2. Add environment-based configuration.
-3. Add tests for API routes.
-4. Add CI/CD from GitHub to Cloud Run.
-5. Replace placeholder AI response with Gemini integration.
+1. Add environment-based configuration.
+2. Add tests for the Firestore-backed routes.
+3. Add CI/CD from GitHub to Cloud Run.
+4. Replace placeholder AI response with Gemini integration.
