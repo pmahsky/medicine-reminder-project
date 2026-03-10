@@ -8,7 +8,15 @@ from pydantic import BaseModel, Field
 class Medicine(BaseModel):
     """Represents a medicine reminder item."""
 
-    id: Optional[int] = Field(default=None, description="Auto-assigned medicine ID")
+    id: Optional[str] = Field(default=None, description="Firestore document ID")
+    name: str = Field(..., description="Medicine name")
+    dosage: str = Field(..., description="Dosage details")
+    time: str = Field(..., description="Reminder time, e.g. 08:00")
+
+
+class MedicineCreate(BaseModel):
+    """Payload used to create a new medicine document."""
+
     name: str = Field(..., description="Medicine name")
     dosage: str = Field(..., description="Dosage details")
     time: str = Field(..., description="Reminder time, e.g. 08:00")
