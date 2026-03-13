@@ -31,6 +31,7 @@ Build a backend that:
 - `POST /ask-ai` returns a placeholder AI response
 - Cloud Run deployment with a public HTTPS endpoint
 - Firestore-backed persistence across container restarts
+- Structured JSON logging for request, Firestore, and error events
 
 ## Run Instructions
 
@@ -237,9 +238,9 @@ Typical deploy commands:
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
 gcloud artifacts repositories create medicine-backend-repo --repository-format=docker --location=asia-south1
 gcloud auth configure-docker asia-south1-docker.pkg.dev
-gcloud builds submit --tag asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v3
+gcloud builds submit --tag asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v4
 gcloud run deploy medicine-backend \
-  --image asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v3 \
+  --image asia-south1-docker.pkg.dev/medicine-cloud-system/medicine-backend-repo/medicine-backend:v4 \
   --region asia-south1 \
   --platform managed \
   --allow-unauthenticated \
@@ -279,6 +280,48 @@ The backend does not embed a credentials file inside the container.
 - Firestore authorizes read and write access using IAM roles on that service account.
 
 In practice, this means the code can call Firestore directly in Cloud Run without manually loading a JSON key file.
+
+## Observability
+
+The backend now writes structured JSON logs to standard output so Cloud Run can ingest them directly into Cloud Logging.
+
+Current logging coverage:
+
+- incoming requests for `GET /medicines`
+- incoming requests for `POST /medicine`
+- Firestore client initialization
+- Firestore read and write operations
+- Firestore failures with stack traces
+- route-level request failures that return `503`
+
+Why structured logging matters:
+
+- Cloud systems run across multiple instances and revisions, so free-form text logs are harder to search reliably.
+- JSON log fields like `severity`, `event`, `path`, `method`, `collection`, and `document_id` make filtering and alerting much easier.
+- Cloud Run captures `stdout` and `stderr`, so JSON logs appear directly in Cloud Logging without extra agents.
+
+Example log entry:
+
+```json
+{
+  "severity": "INFO",
+  "message": "Writing medicine to Firestore.",
+  "logger": "app.services.firestore_service",
+  "timestamp": "2026-03-13T12:34:56+00:00",
+  "event": "firestore_write",
+  "collection": "medicines",
+  "medicine_name": "Paracetamol"
+}
+```
+
+Inspect logs:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="medicine-backend"' \
+  --project medicine-cloud-system \
+  --limit 50
+```
 
 ## Current Limits
 
